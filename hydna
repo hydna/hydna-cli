@@ -82,12 +82,17 @@ class Command(object):
 
 
 def get_command(command_name):
+    """Return `Command` subclass with a `Command.name` matching
+    `command_name.
+
+    """
     for command_cls in COMMANDS:
         if command_cls.name == command_name:
             return command_cls
     raise CommandNotFound(command_name)
 
-def dispatcher():
+def dispatch():
+    """Validate arguments and dispatch subcommand. Or print usage string."""
     if len(sys.argv) > 1:
         command_name = sys.argv[1]
         arguments = sys.argv[1:]
@@ -116,6 +121,10 @@ def dispatcher():
 # commands
 
 class PushBehaviorCommand(Command):
+    """Upload behaviors in current directory to Hydna for validation and
+    deployment.
+
+    """
     name = 'push'
     options = [
         Option('api_key', '-a', '--api-key', required=True),
@@ -138,26 +147,30 @@ class PushBehaviorCommand(Command):
         try:
             response = self.push_behavior(opts.domain_name, opts.api_key,
                                           archive)
-            if response['status']:
-                if 'be_validation_error' in response:
-                    sys.stderr.write("Files did not pass validation:\n\n")
-                    sys.stderr.write("%s\n" % response['be_validation_error'])
-                    sys.exit(1)
-                sys.stderr.write("Something went wrong\n")
-                sys.exit(1)
-            print "Behaviors pushed!"
         except APIRequestError, e:
-            sys.stderr.write("Something went wrong\n")
+            sys.stderr.write("[ERROR] %s\n" % e.message)
             sys.exit(1)
         except APIAuthenticationError, e:
-            sys.stderr.write("Authentication error\n")
+            sys.stderr.write("[ERROR] %s\n" % e.message)
             sys.exit(1)
+
+        if response['status']:
+            if 'be_validation_error' in response:
+                sys.stderr.write("[ERROR] Files did not pass "
+                                 "validation:\n\n")
+                sys.stderr.write("%s\n" % response['be_validation_error'])
+                sys.exit(1)
+
+            sys.stderr.write("[ERROR] Unexpected error.\n")
+            sys.exit(1)
+
+        print "[OK] Behaviors deployed."
             
     def is_valid_api_key(self, api_key):
         path = '/api/1/ping/'
         url = urlparse.urljoin(API_HOST, path)
         headers = { 'X-Api-Key': api_key }
-        response = get(url, headers=headers)
+        response = request(url, method='GET', headers=headers)
         if response.status == httplib.OK:
             return True
         return False
@@ -169,7 +182,11 @@ class PushBehaviorCommand(Command):
         files = { 'file': archive }
         headers = { 'X-Api-Key': api_key }
 
-        return polling_request(url, 'POST', files=files, headers=headers)
+        def upload_callback():
+            print "[OK] Upload done, deploying to domain ..."
+
+        return api_request(url, 'POST', files=files, headers=headers,
+                           accepted_callback=upload_callback)
 
     def archive(self, path):
         """Create a zip-archive of `path`."""
@@ -205,10 +222,14 @@ COMMANDS = (PushBehaviorCommand, )
 
 # http stuff
 
-def http_connection_cls(https=False, file_transfer=False):
-    base_cls = https and httplib.HTTPSConnection or httplib.HTTPConnection
+def http_connection_cls(for_https=False, for_file_transfer=False):
+    """Generate and return a class that is tailored for the needs indicated by
+    `for_https` and `for_file_transfer`.
 
-    if not file_transfer:
+    """
+    base_cls = for_https and httplib.HTTPSConnection or httplib.HTTPConnection
+
+    if not for_file_transfer:
         return base_cls
 
     class HTTPConnectionWithProgress(base_cls):
@@ -220,7 +241,8 @@ def http_connection_cls(https=False, file_transfer=False):
             percentage = int(100 * d)
 
             bar = '[%s]' % (bars * '#').ljust(barlength)
-            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3), 'uploaded'))
+            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3),
+                                               'uploaded'))
             sys.stdout.flush()
 
         def done(self, total_size):
@@ -240,8 +262,9 @@ def http_connection_cls(https=False, file_transfer=False):
                 except socket.error, e:
                     if e[0] == errno.EPIPE:
                         # the server closed the connection before the entire
-                        # request was sent. this is probably because the server
-                        # discarded the request on merits of lacking credentials.
+                        # request was sent. this is probably because the
+                        # server discarded the request on merits of lacking
+                        # credentials.
                         # print "\r%s" % (27 * ' ')
                         return
                     raise
@@ -254,6 +277,10 @@ def http_connection_cls(https=False, file_transfer=False):
     return HTTPConnectionWithProgress
 
 def encode_multipart_formdata(params):
+    """Return a tuple holding a content-type, including the boundary, and the
+    values encoded for use as multipart form data.
+
+    """
     boundary = '---BOUNDARY:%s---' % uuid.uuid4().bytes.encode('hex')
     buf = StringIO()
 
@@ -261,7 +288,8 @@ def encode_multipart_formdata(params):
         buf.write('--%s\n\n' % boundary)
         if isinstance(value, file) or isinstance(value, StringIO):
             filename = os.path.basename(value.name)
-            buf.write('Content-Disposition: form-data; name="%s"; filename="%s"\r\n' % (key, filename))
+            buf.write('Content-Disposition: form-data; name="%s"; '
+                      'filename="%s"\r\n' % (key, filename))
             buf.write("Content-Type: application/octet-stream\r\n")
             if isinstance(value, file):
                 buf.write("\r\n%s\r\n" % value.read())
@@ -296,59 +324,59 @@ def request(url, method='GET', params=None, files=None, headers=None):
 
     c = http_connection_cls(o.scheme == 'https', bool(files))(o.netloc)
     c.request(method, o.path, body, headers=headers)
-    response = c.getresponse()
-    # c.close()
 
+    response = c.getresponse()
     return response
 
-def get(url, params=None, headers=None):
-    return request(url, method='GET', params=params, headers=headers)
+def api_request(url, method, params=None, files=None, headers=None,
+                    task_id=None, accepted_callback=None):
+    """Simple wrapper around `request()` that handles long-running jobs
+    through task polling. `accepted_callback` is a function that is called
+    with no arguments the first time a long-running process has been accepted.
 
-def post(url, params=None, files=None, headers=None):
-    return request(url, method='POST', params=params, files=files,
-                   headers=headers)
+    """
+    headers = headers.copy() or {}
 
-def put(url, params=None, files=None, headers=None):
-    return request(url, method='PUT', params=params, files=files,
-                   headers=headers)
-
-def polling_request(url, method, params=None, files=None, headers=None,
-                    task_id=None):
-    headers = headers or {}
     if task_id is not None:
+        # purge everything associated with multipart submissions to avoid
+        # multiple uploads when polling a task by id.
         files = None
-        headers.update({
-            'X-Task-Id': task_id,
-        })
-
-        # we must purge headers associated with multipart uploads here.
-        # there's definitely a better solution.
         for key in ('Content-type', 'Content-length'):
             if key in headers:
                 del headers[key]
 
-    r = request(url, method=method, params=params, files=files,
-                headers=headers)
+        headers.update({
+            'X-Task-Id': task_id,
+        })
+
+    r = request(url, method, params, files, headers)
 
     if r.status == httplib.ACCEPTED:
         obj = json.loads(r.read())
         task_id = obj.get('task_id')
 
-        if task_id:
-            time.sleep(5.0)
-            return polling_request(url, method, params, files, headers,
-                                   task_id)
-        else:
-            raise ValueError
+        if task_id is None:
+            raise APIRequestError("No task id present.")
+
+        if accepted_callback is not None:
+            accepted_callback()
+
+            # remove the callback as it's only supposed to be called when the
+            # task has been accepted.
+            accepted_callback = None
+
+        time.sleep(5.0)
+        return api_request(url, method=method, params=params, files=files,
+                           headers=headers, task_id=task_id)
 
     if r.status == httplib.OK:
         return json.loads(r.read())
 
     if r.status == httplib.FORBIDDEN:
-        raise APIAuthenticationError()
+        raise APIAuthenticationError("Authentication error.")
 
-    raise APIRequestError()
+    raise APIRequestError("Server error.")
 
 
 if __name__ == "__main__":
-    dispatcher()
+    dispatch()
