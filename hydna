@@ -1,0 +1,338 @@
+#!/usr/bin/env python
+import errno
+import httplib
+import json
+import optparse
+import os
+import socket
+import sys
+import time
+import urllib
+import urlparse
+import uuid
+import zipfile
+
+from StringIO import StringIO
+
+API_HOST = "http://127.0.0.1:8000/"
+# API_HOST = "https://www.hydna.com/"
+
+DEFAULT_UPLOAD_NAME = 'behavior.zip'
+MAX_UPLOAD_SIZE = 2 * 1024 * 1024
+
+# exceptions
+
+class CommandNotFound(Exception):
+    pass
+
+
+# command framework
+
+class Option(object):
+    def __init__(self, dest, opt_str=None, opt_str_long=None, required=False):
+        self.dest = dest
+        self.opt_str = opt_str
+        self.opt_str_long = opt_str_long
+        self.required = required
+
+        if opt_str is None and opt_str_long is None:
+            raise ValueError("You must at least one of specify opt_str and "
+                             "opt_str_long")
+
+
+class Command(object):
+    name = None
+    options = []
+
+    def __init__(self):
+        usage = "usage: %%prog %s [opts]" % self.name
+
+        self.parser = optparse.OptionParser(usage)
+        self._required_options = []
+
+        for option in self.options:
+            self.add_option(option)
+            if option.required:
+                self._required_options.append(option.dest)
+
+    def add_option(self, option):
+        self.parser.add_option(option.opt_str, option.opt_str_long,
+                               dest=option.dest)
+
+    def validate(self, arguments):
+        opts, _rest = self.parser.parse_args(arguments)
+        for required_option in self._required_options:
+            if getattr(opts, required_option) is None:
+                self.parser.error("Missing one or more required options.")
+        return opts
+
+    def error(self, message):
+        self.parser.error(message)
+
+    def run(self, opts):
+        raise NotImplementedError
+
+
+def get_command(command_name):
+    for command_cls in COMMANDS:
+        if command_cls.name == command_name:
+            return command_cls
+    raise CommandNotFound(command_name)
+
+def dispatcher():
+    if len(sys.argv) > 1:
+        command_name = sys.argv[1]
+        arguments = sys.argv[1:]
+
+        try:
+            command_cls = get_command(command_name)
+        except CommandNotFound, e:
+            sys.stderr.write("Command not found: '%s'\n" % command_name)
+            sys.exit(1)
+
+        command = command_cls()
+        opts = command.validate(arguments)
+
+        try:
+            command.run(opts)
+        except KeyboardInterrupt, e:
+            print
+    else:
+        parser = optparse.OptionParser("%prog <command> [opts]")
+        sys.stderr.write("%s\n" % parser.get_usage())
+        sys.stderr.write("\nAvailable commands:\n")
+        for command in COMMANDS:
+            sys.stderr.write("    %s\n" % command.name)
+        sys.exit(1)
+
+# commands
+
+class PushBehaviorCommand(Command):
+    name = 'push'
+    options = [
+        Option('api_key', '-a', '--api-key', required=True),
+        Option('domain_name', '-d', '--domain', required=True),
+    ]
+
+    def run(self, opts):
+        if not os.path.isfile('./setup.be'):
+            self.error("No 'setup.be' in current working directory.")
+
+        if not self.is_valid_api_key(opts.api_key):
+            self.error("Invalid api key.")
+
+        archive = self.archive('.')
+
+        if archive.tell() > MAX_UPLOAD_SIZE:
+            self.error("Behaviors may not be larger than 2MB in size")
+
+        response = self.push_behavior(opts.domain_name, opts.api_key,
+                                      archive)
+
+        if response.status in (200, 403):
+            response_data = json.loads(response.read())
+            if response_data['status']:
+                sys.stderr.write("%s\n" % response_data['message'])
+                sys.exit(1)
+            print "Behaviors deployed!"
+        else:
+            sys.stderr.write("Something went wrong.\n")
+            sys.exit(1)
+
+    def is_valid_api_key(self, api_key):
+        path = '/api/1/ping/'
+        url = urlparse.urljoin(API_HOST, path)
+        headers = { 'X-Api-Key': api_key }
+        response = get(url, headers=headers)
+        if response.status == 200:
+            return True
+        return False
+
+    def push_behavior(self, domain_name, api_key, archive):
+        path = '/api/1/domains/%s/behaviors/' % domain_name
+        url = urlparse.urljoin(API_HOST, path)
+
+        files = { 'file': archive }
+        headers = { 'X-Api-Key': api_key }
+
+        return polling_request(url, 'POST', files=files, headers=headers)
+
+    def archive(self, path):
+        """Create a zip-archive of `path`."""
+        buf = StringIO()
+        buf.name = DEFAULT_UPLOAD_NAME
+
+        root_len = len(os.path.abspath(path))
+
+        zf = zipfile.ZipFile(buf, 'w')
+        for root, dirnames, filenames in os.walk(path):
+            archive_root = os.path.abspath(root)[root_len:]
+
+            if archive_root.startswith('/'):
+                archive_root = archive_root[1:]
+
+            if archive_root.startswith('.'):
+                continue
+
+            zf.write(root, archive_root)
+
+            for filename in filenames:
+                if filename.startswith('.'):
+                    continue
+                # print root, archive_root, filename
+                zf.write(os.path.join(root, filename),
+                         os.path.join(archive_root, filename))
+        zf.close()
+
+        return buf
+
+
+COMMANDS = (PushBehaviorCommand, )
+
+# http stuff
+
+def http_connection_cls(https=False, file_transfer=False):
+    base_cls = https and httplib.HTTPSConnection or httplib.HTTPConnection
+
+    if not file_transfer:
+        return base_cls
+
+    class HTTPConnectionWithProgress(base_cls):
+        CHUNK_SIZE = 2048
+
+        def show_progress(self, bit, total, barlength=10):   
+            d = bit / float(total)
+            bars = int(d * barlength)
+            percentage = int(100 * d)
+
+            bar = '[%s]' % (bars * '#').ljust(barlength)
+            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3), 'completed'))
+            sys.stdout.flush()
+
+        def done(self, total_size):
+            print ""
+
+        def send(self, data):
+            total_size = len(data)
+            sent = 0
+
+            if self.sock is None:
+                self.connect()
+
+            while sent < total_size:
+                offset = sent + min(total_size - sent, self.CHUNK_SIZE)
+                try:
+                    self.sock.sendall(data[sent:offset])
+                except socket.error, e:
+                    if e[0] == errno.EPIPE:
+                        # the server closed the connection before the entire
+                        # request was sent. this is probably because the server
+                        # discarded the request on merits of lacking credentials.
+                        # print "\r%s" % (27 * ' ')
+                        return
+                    raise
+                sent = offset
+
+                self.show_progress(offset, total_size)
+
+            self.done(total_size)
+
+    return HTTPConnectionWithProgress
+
+def encode_multipart_formdata(params):
+    boundary = '---BOUNDARY:%s---' % uuid.uuid4().bytes.encode('hex')
+    buf = StringIO()
+
+    for key, value in params.items():
+        buf.write('--%s\n\n' % boundary)
+        if isinstance(value, file) or isinstance(value, StringIO):
+            filename = os.path.basename(value.name)
+            buf.write('Content-Disposition: form-data; name="%s"; filename="%s"\r\n' % (key, filename))
+            buf.write("Content-Type: application/octet-stream\r\n")
+            if isinstance(value, file):
+                buf.write("\r\n%s\r\n" % value.read())
+            else:
+                buf.write("\r\n%s\r\n" % value.getvalue())
+        else:
+            buf.write('Content-Disposition: form-data; name="%s"' % key)
+            buf.write('\r\n\r\n%s\r\n' % value)
+        buf.write('--%s--\r\n\r\n' % boundary)
+
+    content_type = 'multipart/form-data; boundary=%s' % boundary
+
+    return content_type, buf.getvalue()
+
+def request(url, method='GET', params=None, files=None, headers=None):
+    o = urlparse.urlparse(url)
+
+    params = params or {}
+    files = files or {}
+    headers = headers or {}
+
+    params.update(o.params)
+
+    if files:
+        assert(method in ('POST', 'PUT'))
+        params.update(files)
+        ctype, body = encode_multipart_formdata(params)
+        headers['Content-type'] = ctype
+        headers['Content-length'] = str(len(body))
+    else:
+        body = urllib.urlencode(params)
+
+    c = http_connection_cls(o.scheme == 'https', bool(files))(o.netloc)
+    c.request(method, o.path, body, headers=headers)
+    response = c.getresponse()
+    c.close()
+
+    return response
+
+def get(url, params=None, headers=None):
+    return request(url, method='GET', params=params, headers=headers)
+
+def post(url, params=None, files=None, headers=None):
+    return request(url, method='POST', params=params, files=files,
+                   headers=headers)
+
+def put(url, params=None, files=None, headers=None):
+    return request(url, method='PUT', params=params, files=files,
+                   headers=headers)
+
+def polling_request(url, method, params=None, files=None, headers=None,
+                    task_id=None):
+    headers = headers or {}
+    if task_id is not None:
+        files = None
+        headers.update({
+            'X-Task-Id': task_id,
+        })
+
+        # we must purge headers associated with multipart uploads here.
+        # there's definitely a better solution.
+        for key in ('Content-type', 'Content-length'):
+            if key in headers:
+                del headers[key]
+
+    r = request(url, method=method, params=params, files=files,
+                headers=headers)
+
+    if r.status == 202:
+        obj = json.loads(r.read())
+        task_id = obj.get('task_id')
+
+        if task_id:
+            time.sleep(5.0)
+            return polling_request(url, method, params, files, headers,
+                                   task_id)
+        else:
+            raise ValueError
+    return r
+
+    if r.status == 200:
+        # we should probably do something for convenience here
+        return r
+
+    return r
+
+if __name__ == "__main__":
+    dispatcher()
