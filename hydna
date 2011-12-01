@@ -44,7 +44,7 @@ class Option(object):
         self.required = required
 
         if opt_str is None and opt_str_long is None:
-            raise ValueError("You must at least one of specify opt_str and "
+            raise ValueError("You must specify at least one of opt_str and "
                              "opt_str_long")
 
 
