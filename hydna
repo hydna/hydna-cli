@@ -14,8 +14,8 @@ import zipfile
 
 from StringIO import StringIO
 
-API_HOST = "http://127.0.0.1:8000/"
-# API_HOST = "https://www.hydna.com/"
+# API_HOST = "http://127.0.0.1:8000/"
+API_HOST = "https://www.hydna.com/"
 
 DEFAULT_UPLOAD_NAME = 'behavior.zip'
 MAX_UPLOAD_SIZE = 2 * 1024 * 1024
@@ -23,6 +23,14 @@ MAX_UPLOAD_SIZE = 2 * 1024 * 1024
 # exceptions
 
 class CommandNotFound(Exception):
+    pass
+
+
+class APIRequestError(Exception):
+    pass
+
+
+class APIAuthenticationError(Exception):
     pass
 
 
@@ -126,18 +134,24 @@ class PushBehaviorCommand(Command):
         if archive.tell() > MAX_UPLOAD_SIZE:
             self.error("Behaviors may not be larger than 2MB in size")
 
-        response = self.push_behavior(opts.domain_name, opts.api_key,
-                                      archive)
-
-        if response.status in (200, 403):
-            response_data = json.loads(response.read())
-            if response_data['status']:
-                sys.stderr.write("%s\n" % response_data['message'])
+        try:
+            response = self.push_behavior(opts.domain_name, opts.api_key,
+                                          archive)
+            if response['status']:
+                if 'be_validation_error' in response:
+                    sys.stderr.write("Files did not pass validation:\n\n")
+                    sys.stderr.write("%s\n" % response['be_validation_error'])
+                    sys.exit(1)
+                sys.stderr.write("Something went wrong\n")
                 sys.exit(1)
-            print "Behaviors deployed!"
-        else:
-            sys.stderr.write("Something went wrong.\n")
+            print "Behaviors pushed!"
+        except APIRequestError, e:
+            sys.stderr.write("Something went wrong\n")
             sys.exit(1)
+        except APIAuthenticationError, e:
+            sys.stderr.write("Authentication error\n")
+            sys.exit(1)
+            
 
     def is_valid_api_key(self, api_key):
         path = '/api/1/ping/'
@@ -206,7 +220,7 @@ def http_connection_cls(https=False, file_transfer=False):
             percentage = int(100 * d)
 
             bar = '[%s]' % (bars * '#').ljust(barlength)
-            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3), 'completed'))
+            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3), 'uploaded'))
             sys.stdout.flush()
 
         def done(self, total_size):
@@ -283,7 +297,7 @@ def request(url, method='GET', params=None, files=None, headers=None):
     c = http_connection_cls(o.scheme == 'https', bool(files))(o.netloc)
     c.request(method, o.path, body, headers=headers)
     response = c.getresponse()
-    c.close()
+    # c.close()
 
     return response
 
@@ -326,13 +340,15 @@ def polling_request(url, method, params=None, files=None, headers=None,
                                    task_id)
         else:
             raise ValueError
-    return r
 
     if r.status == 200:
-        # we should probably do something for convenience here
-        return r
+        return json.loads(r.read())
 
-    return r
+    if r.status == 403:
+        raise APIAuthenticationError()
+
+    raise APIRequestError()
+
 
 if __name__ == "__main__":
     dispatcher()
