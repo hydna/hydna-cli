@@ -23,15 +23,19 @@ MAX_UPLOAD_SIZE = 2
 # exceptions
 
 class CommandNotFound(Exception):
-    pass
+    def __init__(self, command_name):
+        self.command_name = command_name
 
 
 class APIRequestError(Exception):
-    pass
+    def __init__(self, url, msg):
+        self.url = url
+        self.msg = msg
 
 
 class APIAuthenticationError(Exception):
-    pass
+    def __init__(self):
+        self.msg = u"Unable to authenticate."
 
 
 # command framework
@@ -100,7 +104,7 @@ def dispatch():
         try:
             command_cls = get_command(command_name)
         except CommandNotFound, e:
-            sys.stderr.write("Command not found: '%s'\n" % command_name)
+            sys.stderr.write("Command not found: '%s'\n" % e.command_name)
             sys.exit(1)
 
         command = command_cls()
@@ -148,10 +152,10 @@ class PushBehaviorCommand(Command):
             response = self.push_behavior(opts.domain_name, opts.api_key,
                                           archive)
         except APIRequestError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.message)
+            sys.stderr.write("[ERROR] %s\n" % e.msg)
             sys.exit(1)
         except APIAuthenticationError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.message)
+            sys.stderr.write("[ERROR] %s\n" % e.msg)
             sys.exit(1)
 
         if response['status']:
@@ -348,7 +352,7 @@ def api_request(url, method, params=None, files=None, headers=None,
         task_id = obj.get('task_id')
 
         if task_id is None:
-            raise APIRequestError("No task id present.")
+            raise APIRequestError(url, "No task id present.")
 
         if accepted_callback is not None:
             accepted_callback()
@@ -365,9 +369,9 @@ def api_request(url, method, params=None, files=None, headers=None,
         return json.loads(r.read())
 
     if r.status == httplib.FORBIDDEN:
-        raise APIAuthenticationError("Authentication error.")
+        raise APIAuthenticationError()
 
-    raise APIRequestError("Server error.")
+    raise APIRequestError(url, "Server error.")
 
 
 if __name__ == "__main__":
