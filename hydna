@@ -138,7 +138,7 @@ class PushBehaviorCommand(Command):
         if not self.is_valid_api_key(opts.api_key):
             self.error("Invalid api key.")
 
-        archive = self.archive('.')
+        archive = self.archive(os.getcwd())
 
         if archive.tell() > MAX_UPLOAD_SIZE * 1024 * 1024:
             self.error("Behaviors may not be larger than %s MB "
@@ -193,40 +193,20 @@ class PushBehaviorCommand(Command):
         buf = StringIO()
         buf.name = DEFAULT_UPLOAD_NAME
 
-        root_len = len(os.path.abspath(path))
-
         zf = zipfile.ZipFile(buf, 'w')
+
         for root, dirnames, filenames in os.walk(path):
-            archive_root = os.path.abspath(root)[root_len:]
-
-            if archive_root.startswith('/'):
-                archive_root = archive_root[1:]
-
-            if archive_root.startswith('.'):
+            if os.path.basename(root) and os.path.basename(root)[0] in '._':
                 continue
 
-            try:
-                zf.write(root, archive_root)
-            except IOError, e:
-                if e.errno == 21:
-                    # writing directories fail under python2.6, but not
-                    # explicitly writing it using the 2.7 version fails when
-                    # trying to extract the contents of the archive using
-                    # `unzip` on Ubuntu.
-                    pass
-
             for filename in filenames:
-                if filename.startswith('.'):
+                if filename[0] in '._':
                     continue
 
-                print "here"
-                print root, filename
-                print archive_root, filename
+                full_path = os.path.join(root, filename)
+                zf.write(full_path, full_path[len(path) + len(os.sep):])
 
-                zf.write(os.path.join(root, filename),
-                         os.path.join(archive_root, filename))
         zf.close()
-
         return buf
 
 
