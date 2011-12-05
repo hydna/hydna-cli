@@ -205,11 +205,23 @@ class PushBehaviorCommand(Command):
             if archive_root.startswith('.'):
                 continue
 
-            zf.write(root, archive_root)
+            try:
+                zf.write(root, archive_root)
+            except IOError, e:
+                if e.errno == 21:
+                    # writing directories fail under python2.6, but not
+                    # explicitly writing it using the 2.7 version fails when
+                    # trying to extract the contents of the archive using
+                    # `unzip` on Ubuntu.
+                    pass
 
             for filename in filenames:
                 if filename.startswith('.'):
                     continue
+
+                print "here"
+                print root, filename
+                print archive_root, filename
 
                 zf.write(os.path.join(root, filename),
                          os.path.join(archive_root, filename))
