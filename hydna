@@ -322,6 +322,10 @@ def request(url, method='GET', params=None, files=None, headers=None):
     c.request(method, o.path, body, headers=headers)
 
     response = c.getresponse()
+    response.data = response.read()
+
+    c.close()
+
     return response
 
 def api_request(url, method, params=None, files=None, headers=None,
@@ -348,7 +352,7 @@ def api_request(url, method, params=None, files=None, headers=None,
     r = request(url, method, params, files, headers)
 
     if r.status == httplib.ACCEPTED:
-        obj = json.loads(r.read())
+        obj = json.loads(r.data)
         task_id = obj.get('task_id')
 
         if task_id is None:
@@ -366,7 +370,7 @@ def api_request(url, method, params=None, files=None, headers=None,
                            headers=headers, task_id=task_id)
 
     if r.status == httplib.OK:
-        return json.loads(r.read())
+        return json.loads(r.data)
 
     if r.status == httplib.FORBIDDEN:
         raise APIAuthenticationError()
