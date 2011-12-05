@@ -231,20 +231,19 @@ def http_connection_cls(for_https=False, for_file_transfer=False):
     class HTTPConnectionWithProgress(base_cls):
         CHUNK_SIZE = 2048
 
-        def show_progress(self, bit, total, barlength=10):   
-            d = bit / float(total)
-            bars = int(d * barlength)
-            percentage = int(100 * d)
+        def endheaders(self, message_body=None):
+            # end headers, but do _not_ send the `message_body`
+            base_cls.endheaders(self)
 
-            bar = '[%s]' % (bars * '#').ljust(barlength)
-            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3),
-                                               'uploaded'))
-            sys.stdout.flush()
+            # override the default send-fun with our local version that 
+            # displays a progress bar.
+            self.send = self.send_with_progress
 
-        def done(self, total_size):
-            print ""
+            # now we can send the body
+            if message_body is not None:
+                self.send(message_body)
 
-        def send(self, data):
+        def send_with_progress(self, data):
             total_size = len(data)
             sent = 0
 
@@ -269,6 +268,20 @@ def http_connection_cls(for_https=False, for_file_transfer=False):
                 self.show_progress(offset, total_size)
 
             self.done(total_size)
+
+        def show_progress(self, bit, total, barlength=10):   
+            d = bit / float(total)
+            bars = int(d * barlength)
+            percentage = int(100 * d)
+
+            bar = '[%s]' % (bars * '#').ljust(barlength)
+            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3),
+                                               'uploaded'))
+            sys.stdout.flush()
+
+        def done(self, total_size):
+            print ""
+
 
     return HTTPConnectionWithProgress
 
