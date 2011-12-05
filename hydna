@@ -210,7 +210,7 @@ class PushBehaviorCommand(Command):
             for filename in filenames:
                 if filename.startswith('.'):
                     continue
-                # print root, archive_root, filename
+
                 zf.write(os.path.join(root, filename),
                          os.path.join(archive_root, filename))
         zf.close()
