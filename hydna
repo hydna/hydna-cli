@@ -112,6 +112,12 @@ def dispatch():
 
         try:
             command.run(opts)
+        except APIRequestError, e:
+            sys.stderr.write("[ERROR] %s\n" % e.msg)
+            sys.exit(1)
+        except APIAuthenticationError, e:
+            sys.stderr.write("[ERROR] %s\n" % e.msg)
+            sys.exit(1)
         except KeyboardInterrupt, e:
             print
     else:
@@ -170,15 +176,7 @@ class PushBehaviorCommand(CommandWithAPIKey):
             self.error("Behaviors may not be larger than %s MB "
                        "in size" % MAX_UPLOAD_SIZE)
 
-        try:
-            response = self.push_behavior(opts.domain_name, opts.api_key,
-                                          archive)
-        except APIRequestError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.msg)
-            sys.exit(1)
-        except APIAuthenticationError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.msg)
-            sys.exit(1)
+        response = self.push_behavior(opts.domain_name, opts.api_key, archive)
 
         if response['status']:
             if 'be_validation_error' in response:
@@ -241,17 +239,11 @@ class RestartInstanceCommand(CommandWithAPIKey):
 
         path = '/api/1/domains/%s/restart/' % opts.domain_name
         url = urlparse.urljoin(API_HOST, path)
-        try:
-            headers = { 'X-Api-Key': opts.api_key }
-            r = api_request(url, 'POST', headers=headers)
-        except APIRequestError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.msg)
-            sys.exit(1)
-        except APIAuthenticationError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.msg)
-            sys.exit(1)
+        headers = { 'X-Api-Key': opts.api_key }
 
-        if r['status']:
+        response = api_request(url, 'POST', headers=headers)
+
+        if response['status']:
             sys.stderr.write("[ERROR] Unexpected error.\n")
             sys.exit(1)
 
