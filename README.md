@@ -17,7 +17,6 @@ issue the following command:
 
 # TODO
 
-- Restructure and add body-sent callback.
 - Implement cert verification
 - Add rest of commands
 - Comment :)
