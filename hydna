@@ -124,14 +124,36 @@ def dispatch():
 
 # commands
 
-class PushBehaviorCommand(Command):
+class CommandWithAPIKey(Command):
+    """Baseclass that adds a switch to supply an API key, and a method
+    to validate the key against the API. Keys are validated on every request,
+    the method is merely supposed to be a convenience to facilitate
+    displaying error messages.
+    
+    """
+    def __init__(self, *args, **kwargs):
+        option = Option('api_key', '-a', '--api-key', required=True)
+        self.options.insert(0, option)
+        super(CommandWithAPIKey, self).__init__(*args, **kwargs)
+
+    def is_valid_api_key(self, api_key):
+        path = '/api/1/ping/'
+        url = urlparse.urljoin(API_HOST, path)
+        headers = { 'X-Api-Key': api_key }
+        response = request(url, method='GET', headers=headers)
+        if response.status == httplib.OK:
+            return True
+        return False
+
+
+class PushBehaviorCommand(CommandWithAPIKey):
     """Upload behaviors in current directory to Hydna for validation and
     deployment.
 
     """
     name = 'push'
+
     options = [
-        Option('api_key', '-a', '--api-key', required=True),
         Option('domain_name', '-d', '--domain', required=True),
     ]
 
@@ -170,15 +192,6 @@ class PushBehaviorCommand(Command):
 
         print "[OK] Behaviors deployed."
             
-    def is_valid_api_key(self, api_key):
-        path = '/api/1/ping/'
-        url = urlparse.urljoin(API_HOST, path)
-        headers = { 'X-Api-Key': api_key }
-        response = request(url, method='GET', headers=headers)
-        if response.status == httplib.OK:
-            return True
-        return False
-
     def push_behavior(self, domain_name, api_key, archive):
         path = '/api/1/domains/%s/behaviors/' % domain_name
         url = urlparse.urljoin(API_HOST, path)
@@ -214,7 +227,38 @@ class PushBehaviorCommand(Command):
         return buf
 
 
-COMMANDS = (PushBehaviorCommand, )
+class RestartInstanceCommand(CommandWithAPIKey):
+    """Restart an instance, dropping all connections and clearing state."""
+    name = 'restart'
+
+    options = [
+        Option('domain_name', '-d', '--domain', required=True),
+    ]
+
+    def run(self, opts):
+        if not self.is_valid_api_key(opts.api_key):
+            self.error("Invalid api key.")
+
+        path = '/api/1/domains/%s/restart/' % opts.domain_name
+        url = urlparse.urljoin(API_HOST, path)
+        try:
+            headers = { 'X-Api-Key': opts.api_key }
+            r = api_request(url, 'POST', headers=headers)
+        except APIRequestError, e:
+            sys.stderr.write("[ERROR] %s\n" % e.msg)
+            sys.exit(1)
+        except APIAuthenticationError, e:
+            sys.stderr.write("[ERROR] %s\n" % e.msg)
+            sys.exit(1)
+
+        if r['status']:
+            sys.stderr.write("[ERROR] Unexpected error.\n")
+            sys.exit(1)
+
+        print "[OK] Instance restarted."
+            
+
+COMMANDS = (PushBehaviorCommand, RestartInstanceCommand)
 
 # http stuff
 
@@ -388,8 +432,7 @@ def api_request(url, method, params=None, files=None, headers=None,
     if r.status == httplib.FORBIDDEN:
         raise APIAuthenticationError()
 
-    raise APIRequestError(url, "Server error.")
-
+    raise APIRequestError(url, "API request error.")
 
 if __name__ == "__main__":
     dispatch()
