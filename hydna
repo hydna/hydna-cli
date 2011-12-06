@@ -144,12 +144,11 @@ class CommandWithAPIKey(Command):
 
     def is_valid_api_key(self, api_key):
         path = '/api/1/ping/'
-        url = urlparse.urljoin(API_HOST, path)
-        headers = { 'X-Api-Key': api_key }
-        response = request(url, method='GET', headers=headers)
-        if response.status == httplib.OK:
-            return True
-        return False
+        try:
+            response = api_request(path, method='GET', api_key=api_key)
+        except (APIRequestError, APIAuthenticationError):
+            return False
+        return True
 
 
 class PushBehaviorCommand(CommandWithAPIKey):
@@ -192,16 +191,12 @@ class PushBehaviorCommand(CommandWithAPIKey):
             
     def push_behavior(self, domain_name, api_key, archive):
         path = '/api/1/domains/%s/behaviors/' % domain_name
-        url = urlparse.urljoin(API_HOST, path)
-
         files = { 'file': archive }
-        headers = { 'X-Api-Key': api_key }
-
         def upload_callback():
             print "[OK] Upload done, deploying to domain ..."
 
         return api_request(url, 'POST', files=files, headers=headers,
-                           accepted_callback=upload_callback)
+                           accepted_callback=upload_callback, api_key=api_key)
 
     def archive(self, path):
         """Create a zip-archive of `path`."""
@@ -238,10 +233,7 @@ class RestartInstanceCommand(CommandWithAPIKey):
             self.error("Invalid api key.")
 
         path = '/api/1/domains/%s/restart/' % opts.domain_name
-        url = urlparse.urljoin(API_HOST, path)
-        headers = { 'X-Api-Key': opts.api_key }
-
-        response = api_request(url, 'POST', headers=headers)
+        response = api_request(path, 'POST', api_key=opts.api_key)
 
         if response['status']:
             sys.stderr.write("[ERROR] Unexpected error.\n")
@@ -377,14 +369,15 @@ def request(url, method='GET', params=None, files=None, headers=None):
 
     return response
 
-def api_request(url, method, params=None, files=None, headers=None,
-                    task_id=None, accepted_callback=None):
+def api_request(path, method, params=None, files=None, headers=None,
+                task_id=None, accepted_callback=None, api_key=None):
     """Simple wrapper around `request()` that handles long-running jobs
     through task polling. `accepted_callback` is a function that is called
     with no arguments the first time a long-running process has been accepted.
 
     """
-    headers = headers.copy() or {}
+    url = urlparse.urljoin(API_HOST, path)
+    headers = headers and headers.copy() or {}
 
     if task_id is not None:
         # purge everything associated with multipart submissions to avoid
@@ -396,6 +389,11 @@ def api_request(url, method, params=None, files=None, headers=None,
 
         headers.update({
             'X-Task-Id': task_id,
+        })
+
+    if api_key is not None:
+        headers.update({
+            'X-Api-Key': api_key,
         })
 
     r = request(url, method, params, files, headers)
@@ -415,7 +413,7 @@ def api_request(url, method, params=None, files=None, headers=None,
             accepted_callback = None
 
         time.sleep(5.0)
-        return api_request(url, method=method, params=params, files=files,
+        return api_request(path, method=method, params=params, files=files,
                            headers=headers, task_id=task_id)
 
     if r.status == httplib.OK:
