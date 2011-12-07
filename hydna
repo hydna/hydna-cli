@@ -296,7 +296,11 @@ class PushBehaviorCommand(CommandWithAPIKey):
     def push_behavior(self, domain_name, api_key, archive):
         path = '/api/1/domains/%s/behaviors/' % domain_name
         files = { 'file': archive }
-        return api_request(path, 'POST', files=files, api_key=api_key)
+        def upload_callback():
+            print "Deploying to domain ..."
+
+        return api_request(path, 'POST', files=files,
+                           accepted_callback=upload_callback, api_key=api_key)
 
     def archive(self, path):
         """Create a zip-archive of `path`."""
