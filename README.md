@@ -7,7 +7,24 @@ simplejson is installed)
 
 # Installation
 
-Put "hydna" somewhere on your path.
+There are a few different ways to install the tool. Please note that your
+$PATH must include the path to the directory into which Python executables
+are installed.
+
+## Option 1 - easy_install
+
+    sudo easy_install hydna-cli
+
+## Option 2 - pip
+
+    pip install hydna-cli
+
+## Option 3 - Manual install
+
+You can also manually put the tool in a directory on your path by
+downloading the script from:
+
+    https://raw.github.com/hydna/hydna-cli/master/hydna
 
 # Usage
 
