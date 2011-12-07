@@ -104,6 +104,8 @@ def load_config(config_file):
         sys.stderr.write("%s following '%s'.\n" % (str(e), error_line))
         sys.exit(1)
 
+    config.path = os.path.expanduser(config.path)
+
     return config
 
 # command framework
