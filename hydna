@@ -33,11 +33,6 @@ MAX_UPLOAD_SIZE = 2
 
 # exceptions
 
-class CommandNotFound(Exception):
-    def __init__(self, command_name):
-        self.command_name = command_name
-
-
 class APIRequestError(Exception):
     def __init__(self, url, msg):
         self.url = url
@@ -70,7 +65,7 @@ def load_config(config_file):
 
     if not os.path.isfile(config_file):
         if user_supplied_config:
-            sys.stderr.write("[ERROR] Specified config file does not "
+            sys.stderr.write("error: Specified configuration file does not "
                              "exist.\n")
             sys.exit(1)
 
@@ -81,7 +76,7 @@ def load_config(config_file):
     try:
         content = open(config_file, 'r').read()
     except IOError:
-        sys.stderr.write("[ERROR] Unable to read config file.\n")
+        sys.stderr.write("error: Unable to read configuration file.\n")
         sys.exit(1)
 
     lexer = shlex.shlex(content, posix=True)
@@ -91,26 +86,27 @@ def load_config(config_file):
         for token in lexer:
             if token not in config.keys():
                 # TODO: use lexer.error_leader when we fix command output.
-                sys.stderr.write("[ERROR] Invalid config parameter name '%s' "
-                                 "on line %s\n" % (token, lexer.lineno))
+                sys.stderr.write("error: Invalid configuration parameter "
+                                 "name '%s' on line %s\n"
+                                 % (token, lexer.lineno))
                 sys.exit(1)
 
             if lexer.get_token() != '=':
-                sys.stderr.write("[ERROR] Expected '=' on line %s.\n"
+                sys.stderr.write("error: Expected '=' on line %s.\n"
                                  % lexer.lineno)
                 sys.exit(1)
 
             value = lexer.get_token()
             if value is lexer.eof:
-                sys.stderr.write("[ERROR] Expected value on line %s\n"
+                sys.stderr.write("error: Expected value on line %s\n"
                                  % lexer.lineno)
                 sys.exit(1)
 
             config[token] = value
     except ValueError, e:
         error_line = lexer.token.splitlines()[0]
-        sys.stderr.write("[ERROR] Error while parsing config file.\n")
-        sys.stderr.write("%s following '%s'.\n" % (str(e), error_line))
+        sys.stderr.write("error: Unable to parse configuration file.\n")
+        sys.stderr.write("  %s following '%s'.\n" % (str(e), error_line))
         sys.exit(1)
 
     config.path = os.path.expanduser(config.path)
@@ -122,6 +118,7 @@ def load_config(config_file):
 class Option(object):
     def __init__(self, dest, opt_str=None, opt_str_long=None, required=False):
         self.dest = dest
+        self.name = dest
         self.opt_str = opt_str
         self.opt_str_long = opt_str_long
         self.required = required
@@ -133,12 +130,14 @@ class Option(object):
 
 class Command(object):
     name = None
+    description = None
     options = []
 
     def __init__(self):
-        usage = "usage: %%prog %s [opts]" % self.name
+        usage = "%%prog %s [options]" % self.name
 
-        self.parser = optparse.OptionParser(usage)
+        self.parser = optparse.OptionParser(usage,
+                                            description=self.description)
         self._required_options = []
 
         for option in self.options:
@@ -154,68 +153,80 @@ class Command(object):
                                dest=option.dest)
 
     def validate(self, arguments):
-        opts, _rest = self.parser.parse_args(arguments)
+        opts, bits = self.parser.parse_args(arguments)
         config = load_config(opts.config_file)
 
         for k, v in config.items():
             if not hasattr(opts, k) or getattr(opts, k) is None:
                 setattr(opts, k, v)
 
-        for required_option in self._required_options:
-            if getattr(opts, required_option) is None:
-                self.parser.error("Missing one or more required options.")
+        for option in self.options:
+            if not option.required:
+                continue
 
-        return opts
+            if getattr(opts, option.name) is None:
+                switch = option.opt_str_long and option.opt_str_long or \
+                        option.opt_str
+                sys.stderr.write("error: Missing one or more required "
+                                 "options:\n\n")
+                sys.stderr.write("  '%s' must be specified.\n" % switch)
+                sys.exit(1)
+
+        return opts, bits
 
     def error(self, message):
         self.parser.error(message)
 
-    def run(self, opts):
+    def run(self, opts, bits):
         raise NotImplementedError
 
 
-def get_command(command_name):
-    """Return `Command` subclass with a `Command.name` matching
-    `command_name.
+def load_command(command_name):
+    """Find and return command matching by `command_name`, or print helpful
+    message to stderr and exit.
 
     """
     for command_cls in COMMANDS:
         if command_cls.name == command_name:
             return command_cls
-    raise CommandNotFound(command_name)
+
+    sys.stderr.write("'%s' is not a hydna command. "
+                     "See 'hydna help'\n" % command_name)
+    sys.exit(1)
+
+def usage(code):
+    parser = optparse.OptionParser("%prog <subcommand> [subcommand options]")
+    stream = code and sys.stderr or sys.stdout
+    stream.write("%s\n" % parser.get_usage())
+    stream.write("Available subcommands:\n\n")
+    for command_cls in COMMANDS:
+        stream.write("  %s" % command_cls.name.ljust(10))
+        if command_cls.description is not None:
+            stream.write(command_cls.description)
+        stream.write("\n")
+    stream.write("\nSee '%s help SUBCOMMAND' for specific help.\n"
+                 % parser.get_prog_name())
+    sys.exit(code)
 
 def dispatch():
     """Validate arguments and dispatch subcommand. Or print usage string."""
     if len(sys.argv) > 1:
         command_name = sys.argv[1]
-        arguments = sys.argv[1:]
+        arguments = sys.argv[2:]
 
-        try:
-            command_cls = get_command(command_name)
-        except CommandNotFound, e:
-            sys.stderr.write("Command not found: '%s'\n" % e.command_name)
-            sys.exit(1)
-
+        command_cls = load_command(command_name)
         command = command_cls()
-        opts = command.validate(arguments)
+        opts, bits = command.validate(arguments)
 
         try:
-            command.run(opts)
-        except APIRequestError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.msg)
-            sys.exit(1)
-        except APIAuthenticationError, e:
-            sys.stderr.write("[ERROR] %s\n" % e.msg)
+            command.run(opts, bits)
+        except (APIRequestError, APIAuthenticationError), e:
+            sys.stderr.write("error: %s\n" % e.msg)
             sys.exit(1)
         except KeyboardInterrupt, e:
             print
     else:
-        parser = optparse.OptionParser("%prog <command> [opts]")
-        sys.stderr.write("%s\n" % parser.get_usage())
-        sys.stderr.write("\nAvailable commands:\n")
-        for command in COMMANDS:
-            sys.stderr.write("    %s\n" % command.name)
-        sys.exit(1)
+        usage(1)
 
 # commands
 
@@ -246,43 +257,47 @@ class PushBehaviorCommand(CommandWithAPIKey):
 
     """
     name = 'push'
+    description = "Validate and push behavior files to Hydna instance."
 
     options = [
         Option('domain_name', '-d', '--domain', required=True),
     ]
 
-    def run(self, opts):
+    def run(self, opts, bits):
         if not os.path.isfile(os.path.join(opts.path, DEFAULT_SETUP_NAME)):
-            self.error("No '%s' in '%s'." % (DEFAULT_SETUP_NAME, opts.path))
+            sys.stderr.write("No '%s' in '%s'.\n"
+                             % (DEFAULT_SETUP_NAME, opts.path))
+            sys.exit(1)
 
         if not self.is_valid_api_key(opts.api_key):
-            self.error("Invalid api key.")
+            sys.stderr.write("error: Invalid api key.\n")
+            sys.exit(1)
 
         archive = self.archive(opts.path)
 
         if archive.tell() > MAX_UPLOAD_SIZE * 1024 * 1024:
-            self.error("Behaviors may not be larger than %s MB "
-                       "in size" % MAX_UPLOAD_SIZE)
+            sys.stderr.write("Behaviors may not be larger than %s MB "
+                             "in size\n" % MAX_UPLOAD_SIZE)
+            sys.exit(1)
 
         response = self.push_behavior(opts.domain_name, opts.api_key, archive)
 
         if response['status']:
             if 'be_validation_error' in response:
-                sys.stderr.write("[ERROR] Files did not pass "
-                                 "validation:\n\n")
-                sys.stderr.write("%s\n" % response['be_validation_error'])
+                sys.stderr.write("error: Files did not pass validation:\n\n")
+                sys.stderr.write("  %s\n" % response['be_validation_error'])
                 sys.exit(1)
 
-            sys.stderr.write("[ERROR] Unexpected error.\n")
+            sys.stderr.write("fatal: Unexpected error.\n")
             sys.exit(1)
 
-        print "[OK] Behaviors deployed."
+        print "Behaviors deployed."
             
     def push_behavior(self, domain_name, api_key, archive):
         path = '/api/1/domains/%s/behaviors/' % domain_name
         files = { 'file': archive }
         def upload_callback():
-            print "[OK] Upload done, deploying to domain ..."
+            print "Upload done, deploying to domain ..."
 
         return api_request(path, 'POST', files=files,
                            accepted_callback=upload_callback, api_key=api_key)
@@ -312,40 +327,58 @@ class PushBehaviorCommand(CommandWithAPIKey):
 class RestartInstanceCommand(CommandWithAPIKey):
     """Restart an instance, dropping all connections and clearing state."""
     name = 'restart'
+    description = "Restart and reset Hydna instance."
 
     options = [
         Option('domain_name', '-d', '--domain', required=True),
     ]
 
-    def run(self, opts):
+    def run(self, opts, bits):
         if not self.is_valid_api_key(opts.api_key):
-            self.error("Invalid api key.")
+            sys.stderr.write("error: Invalid api key.\n")
+            sys.exit(1)
 
         path = '/api/1/domains/%s/restart/' % opts.domain_name
         response = api_request(path, 'POST', api_key=opts.api_key)
 
         if response['status']:
-            sys.stderr.write("[ERROR] Unexpected error.\n")
+            sys.stderr.write("fatal: Unexpected error.\n")
             sys.exit(1)
 
-        print "[OK] Instance restarted."
+        print "Instance restarted."
 
 
 class DummyCommand(CommandWithAPIKey):
     """Dummy command used while debugging. Please Ignore."""
     name = 'dummy'
+    description = 'Will be removed after beta.'
 
     options = [
         Option('domain_name', '-d', '--domain', required=True),
     ]
 
-    def run(self, opts):
+    def run(self, opts, bits):
         print opts.domain_name
         print opts.path
         print opts.api_key
-            
 
-COMMANDS = (PushBehaviorCommand, RestartInstanceCommand, DummyCommand)
+
+class HelpCommand(Command):
+    name = 'help'
+
+    description = "Display help for subcommand."
+
+    def run(self, opts, bits):
+        if not len(bits):
+            usage(0)
+
+        command_cls = load_command(bits[0])
+        command = command_cls()
+        command.parser.print_help()
+
+
+COMMANDS = (PushBehaviorCommand, RestartInstanceCommand, DummyCommand,
+            HelpCommand)
 
 # http stuff
 
