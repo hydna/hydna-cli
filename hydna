@@ -5,6 +5,7 @@ import json
 import optparse
 import os
 import socket
+import shlex
 import sys
 import time
 import urllib
@@ -18,6 +19,8 @@ from StringIO import StringIO
 API_HOST = "https://www.hydna.com/"
 
 DEFAULT_UPLOAD_NAME = 'behavior.zip'
+DEFAULT_CONFIG_NAME = '.hydna.conf'
+DEFAULT_SETUP_NAME = 'setup.be'
 MAX_UPLOAD_SIZE = 2
 
 # exceptions
@@ -37,6 +40,71 @@ class APIAuthenticationError(Exception):
     def __init__(self):
         self.msg = u"Unable to authenticate."
 
+
+# configuration
+
+class Config(dict):
+    def __getattr__(self, name):
+        return self.__getitem__(name)
+
+
+def load_config(config_file):
+    if config_file is None:
+        config_file = os.path.join(os.getcwd(), DEFAULT_CONFIG_NAME)
+        user_supplied_config = False
+    else:
+        user_supplied_config = True
+
+    config_file = os.path.expanduser(config_file)
+    path = os.path.dirname(config_file)
+
+    config = Config(path=path, domain_name=None, api_key=None)
+
+    if not os.path.isfile(config_file):
+        if user_supplied_config:
+            sys.stderr.write("[ERROR] Specified config file does not exist.\n")
+            sys.exit(1)
+
+        # return the default config here as the user hasn't actively told us
+        # to read any configuration.
+        return config
+
+    try:
+        content = open(config_file, 'r').read()
+    except IOError:
+        sys.stderr.write("[ERROR] Unable to read config file.\n")
+        sys.exit(1)
+
+    lexer = shlex.shlex(content, posix=True)
+    lexer.wordchars += './~\\'
+
+    try:
+        for token in lexer:
+            if token not in config.keys():
+                # TODO: use lexer.error_leader when we fix command output.
+                sys.stderr.write("[ERROR] Invalid config parameter name '%s' "
+                                 "on line %s\n" % (token, lexer.lineno))
+                sys.exit(1)
+
+            if lexer.get_token() != '=':
+                sys.stderr.write("[ERROR] Expected '=' on line %s.\n"
+                                 % lexer.lineno)
+                sys.exit(1)
+
+            value = lexer.get_token()
+            if value is lexer.eof:
+                sys.stderr.write("[ERROR] Expected value on line %s\n"
+                                 % lexer.lineno)
+                sys.exit(1)
+
+            config[token] = value
+    except ValueError, e:
+        error_line = lexer.token.splitlines()[0]
+        sys.stderr.write("[ERROR] Error while parsing config file.\n")
+        sys.stderr.write("%s following '%s'.\n" % (str(e), error_line))
+        sys.exit(1)
+
+    return config
 
 # command framework
 
@@ -67,15 +135,25 @@ class Command(object):
             if option.required:
                 self._required_options.append(option.dest)
 
+        # all commands can specify a path to the config file to use.
+        self.add_option(Option('config_file', '-c', '--config-file'))
+
     def add_option(self, option):
         self.parser.add_option(option.opt_str, option.opt_str_long,
                                dest=option.dest)
 
     def validate(self, arguments):
         opts, _rest = self.parser.parse_args(arguments)
+        config = load_config(opts.config_file)
+
+        for k, v in config.items():
+            if not hasattr(opts, k) or getattr(opts, k) is None:
+                setattr(opts, k, v)
+
         for required_option in self._required_options:
             if getattr(opts, required_option) is None:
                 self.parser.error("Missing one or more required options.")
+
         return opts
 
     def error(self, message):
@@ -163,13 +241,13 @@ class PushBehaviorCommand(CommandWithAPIKey):
     ]
 
     def run(self, opts):
-        if not os.path.isfile('./setup.be'):
-            self.error("No 'setup.be' in current working directory.")
+        if not os.path.isfile(os.path.join(opts.path, DEFAULT_SETUP_NAME)):
+            self.error("No '%s' in '%s'." % (DEFAULT_SETUP_NAME, opts.path))
 
         if not self.is_valid_api_key(opts.api_key):
             self.error("Invalid api key.")
 
-        archive = self.archive(os.getcwd())
+        archive = self.archive(opts.path)
 
         if archive.tell() > MAX_UPLOAD_SIZE * 1024 * 1024:
             self.error("Behaviors may not be larger than %s MB "
@@ -195,7 +273,7 @@ class PushBehaviorCommand(CommandWithAPIKey):
         def upload_callback():
             print "[OK] Upload done, deploying to domain ..."
 
-        return api_request(url, 'POST', files=files, headers=headers,
+        return api_request(path, 'POST', files=files,
                            accepted_callback=upload_callback, api_key=api_key)
 
     def archive(self, path):
@@ -240,9 +318,23 @@ class RestartInstanceCommand(CommandWithAPIKey):
             sys.exit(1)
 
         print "[OK] Instance restarted."
+
+
+class DummyCommand(CommandWithAPIKey):
+    """Dummy command used while debugging. Please Ignore."""
+    name = 'dummy'
+
+    options = [
+        Option('domain_name', '-d', '--domain', required=True),
+    ]
+
+    def run(self, opts):
+        print opts.domain_name
+        print opts.path
+        print opts.api_key
             
 
-COMMANDS = (PushBehaviorCommand, RestartInstanceCommand)
+COMMANDS = (PushBehaviorCommand, RestartInstanceCommand, DummyCommand)
 
 # http stuff
 
