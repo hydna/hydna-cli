@@ -309,6 +309,7 @@ class PushBehaviorCommand(CommandWithAPIKey):
 
         zf = zipfile.ZipFile(buf, 'w')
 
+        files = []
         for root, dirnames, filenames in os.walk(path):
             if os.path.basename(root) and os.path.basename(root)[0] in '._':
                 continue
@@ -318,10 +319,23 @@ class PushBehaviorCommand(CommandWithAPIKey):
                     continue
 
                 full_path = os.path.join(root, filename)
-                zf.write(full_path, full_path[len(path) + len(os.sep):])
+                files.append((full_path, full_path[len(path) + len(os.sep):]))
 
+        compressed, total = 0, len(files)
+        self.show_progress(compressed, total)
+        for entry in files:
+            zf.write(*entry)
+            compressed = compressed + 1
+            self.show_progress(compressed, total)
+
+        print ""
         zf.close()
         return buf
+
+    def show_progress(self, compressed, total):
+        msg = "\rCompressing files: %s/%s" % (compressed, total)
+        sys.stdout.write('%s%s\r' % (msg, ' ' * (80 - len(msg))))
+        sys.stdout.flush()
 
 
 class RestartInstanceCommand(CommandWithAPIKey):
@@ -433,14 +447,12 @@ def http_connection_cls(for_https=False, for_file_transfer=False):
 
             self.done(total_size)
 
-        def show_progress(self, bit, total, barlength=10):   
+        def show_progress(self, bit, total):   
             d = bit / float(total)
-            bars = int(d * barlength)
             percentage = int(100 * d)
 
-            bar = '[%s]' % (bars * '#').ljust(barlength)
-            sys.stdout.write("\r%s %s%% %s" % (bar, str(percentage).rjust(3),
-                                               'uploaded'))
+            msg = "\rUploading files: %s%%" % str(percentage).rjust(3)
+            sys.stdout.write('%s%s\r' % (msg, ' ' * (80 - len(msg))))
             sys.stdout.flush()
 
         def done(self, total_size):
