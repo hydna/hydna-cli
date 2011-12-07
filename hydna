@@ -62,7 +62,8 @@ def load_config(config_file):
 
     if not os.path.isfile(config_file):
         if user_supplied_config:
-            sys.stderr.write("[ERROR] Specified config file does not exist.\n")
+            sys.stderr.write("[ERROR] Specified config file does not "
+                             "exist.\n")
             sys.exit(1)
 
         # return the default config here as the user hasn't actively told us
