@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import errno
 import httplib
-import json
 import optparse
 import os
 import socket
@@ -14,6 +13,15 @@ import uuid
 import zipfile
 
 from StringIO import StringIO
+
+try:
+    import json
+except ImportError:
+    try:
+        import simplejson as json
+    except ImportError:
+        sys.stderr.write("Older versions of Python require simplejson.")
+        sys.exit(1)
 
 # API_HOST = "http://127.0.0.1:8000/"
 API_HOST = "https://www.hydna.com/"

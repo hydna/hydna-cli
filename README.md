@@ -2,6 +2,9 @@
 
 Python 2.6+
 
+(the tool will work with versions prior to 2.6 (tested with 2.5.2) if
+simplejson is installed)
+
 # Installation
 
 Put "hydna" somewhere on your path.
