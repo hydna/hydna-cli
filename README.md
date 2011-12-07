@@ -16,14 +16,14 @@ Put "hydna" somewhere on your path.
 To push behaviors, navigate to the folder holding your `setup.be` file and
 issue the following command:
 
-    hydna push --api-key=<api key> --domain=<domain name>
+    hydna push --api-key=<api key> --domain-name=<domain name>
 
 ## Restarting an instance
 
 You can manually restart a runnint instance (disconnecting all clients and
 resetting state in Behaviors) with:
 
-    hydna restart --api-key=<api key> --domain=<domain name>
+    hydna restart --api-key=<api key> --domain-name=<domain name>
 
 # Configuration
 
@@ -48,7 +48,7 @@ Settings are made up from key-value-pairs separated by an equal sign (`=`).
 `domain_name` - Name of the domain on which you wish to perform actions.
                 The presence of this setting allows you to issue
                 commands without the need to specify a domain using 
-                `--domain`.
+                `--domain-name`.
 
 ## Example config
 
@@ -63,4 +63,3 @@ Settings are made up from key-value-pairs separated by an equal sign (`=`).
 - Add rest of commands
 - Add docstrings and comments
 - Attempt to locate config file in parent(s) a la git?
-- Rename switch to --domain-name

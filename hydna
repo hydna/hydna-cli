@@ -260,7 +260,7 @@ class PushBehaviorCommand(CommandWithAPIKey):
     description = "Validate and push behavior files to Hydna instance."
 
     options = [
-        Option('domain_name', '-d', '--domain', required=True),
+        Option('domain_name', '-d', '--domain-name', required=True),
     ]
 
     def run(self, opts, bits):
@@ -344,7 +344,7 @@ class RestartInstanceCommand(CommandWithAPIKey):
     description = "Restart and reset Hydna instance."
 
     options = [
-        Option('domain_name', '-d', '--domain', required=True),
+        Option('domain_name', '-d', '--domain-name', required=True),
     ]
 
     def run(self, opts, bits):
@@ -368,7 +368,7 @@ class DummyCommand(CommandWithAPIKey):
     description = 'Will be removed after beta.'
 
     options = [
-        Option('domain_name', '-d', '--domain', required=True),
+        Option('domain_name', '-d', '--domain-name', required=True),
     ]
 
     def run(self, opts, bits):
