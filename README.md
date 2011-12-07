@@ -58,6 +58,9 @@ Settings are made up from key-value-pairs separated by an equal sign (`=`).
 
 # TODO
 
+- Consistent - and more helpful - output from commands
 - Implement cert verification
 - Add rest of commands
-- Comment :)
+- Add docstrings and comments
+- Attempt to locate config file in parent(s) a la git?
+- Rename switch to --domain-name
