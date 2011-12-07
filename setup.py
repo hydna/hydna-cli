@@ -3,7 +3,7 @@
 
 from distutils.core import setup
 
-setup(name='hydna', version='0.1',
+setup(name='hydna-cli', version='0.1',
       description='Hydna command-line interface.',
       author='Gustaf Sjöberg', author_email='gs@hydna.com',
       scripts=['hydna'])
