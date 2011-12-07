@@ -38,8 +38,14 @@ Settings are made up from key-value-pairs separated by an equal sign (`=`).
 ## Available settings
 
 `path` - Path to the directory containing your `setup.be`
-`api_key` - Your API key
-`domain_name` - Name of the domain on which you wish to perform actions
+
+`api_key` - Your API key. The presence of this setting allows you to issue
+            commands without the need to specify a key using `--api-key`.
+
+`domain_name` - Name of the domain on which you wish to perform actions.
+                The presence of this setting allows you to issue
+                commands without the need to specify a domain using 
+                `--domain`.
 
 ## Example config
 
